@@ -3,7 +3,7 @@ document.getElementById("analyze").addEventListener("click", async () => {
 
   chrome.scripting.executeScript({
     target: { tabId: tab.id },
-    files: ["src/index.js"]
+    files: ["src/contentScript.js"]
   }, () => {
     chrome.scripting.executeScript({
       target: { tabId: tab.id },
