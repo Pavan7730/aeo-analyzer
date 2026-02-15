@@ -1,10 +1,10 @@
-/*************************************
+/************************************************
  * MAIN CONTENT EXTRACTION
- *************************************/
+ ************************************************/
 function extractMainContent() {
   const clone = document.body.cloneNode(true);
 
-  [
+  const removeSelectors = [
     "nav",
     "footer",
     "aside",
@@ -13,17 +13,20 @@ function extractMainContent() {
     "noscript",
     ".ads",
     ".sidebar",
-    ".menu"
-  ].forEach(sel => {
+    ".menu",
+    ".popup"
+  ];
+
+  removeSelectors.forEach(sel => {
     clone.querySelectorAll(sel).forEach(el => el.remove());
   });
 
   return clone;
 }
 
-/*************************************
- * CONTENT MAP (H1–H3 + TEXT)
- *************************************/
+/************************************************
+ * BUILD CONTENT MAP (H1–H3 + TEXT)
+ ************************************************/
 function buildContentMap(root) {
   const sections = [];
   let current = null;
@@ -46,9 +49,9 @@ function buildContentMap(root) {
   return sections;
 }
 
-/*************************************
+/************************************************
  * PAGE INTENT DETECTION
- *************************************/
+ ************************************************/
 function detectPageIntent(sections) {
   let questionHeadings = 0;
   let optionLines = 0;
@@ -70,58 +73,72 @@ function detectPageIntent(sections) {
   return "informational";
 }
 
-/*************************************
- * AEO SCORE (SIMPLE BUT HONEST)
- *************************************/
-function scoreAEO(sections) {
+/************************************************
+ * AEO SCORING (HONEST & INTENT-AWARE)
+ ************************************************/
+function scoreAEO(sections, intent) {
+  if (intent === "exam") return 0;
+
   let score = 0;
 
   sections.forEach(sec => {
-    if (sec.heading.endsWith("?")) score += 10;
+    // Question-style headings
+    if (/what|how|why|when|who/i.test(sec.heading)) {
+      score += 8;
+    }
 
     sec.blocks.forEach(block => {
+      const wordCount = block.text.split(" ").length;
+
+      // Definition signals
       if (/ is | refers to | means /i.test(block.text)) score += 10;
+
+      // Lists and steps
       if (block.type === "ul" || block.type === "ol") score += 5;
-      if (block.text.split(" ").length < 60) score += 3;
+
+      // Direct answer sized paragraphs
+      if (wordCount >= 25 && wordCount <= 60) score += 5;
+
+      // Penalize very long paragraphs
+      if (wordCount > 120) score -= 5;
     });
   });
 
-  return Math.min(score, 100);
+  return Math.max(0, Math.min(score, 100));
 }
 
-/*************************************
- * SMART FEEDBACK ENGINE (NON-GENERIC)
- *************************************/
+/************************************************
+ * SMART, PAGE-SPECIFIC FEEDBACK
+ ************************************************/
 function generateFeedback(sections, intent) {
   const feedback = [];
 
-  // --- EXAM / QUESTION PAGES ---
+  /* ---------- EXAM / MCQ PAGES ---------- */
   if (intent === "exam") {
-    const sampleQuestion = sections.find(s => s.heading.endsWith("?"));
+    const example = sections.find(s => s.heading.endsWith("?"));
 
     feedback.push(
-      "This page is designed to test users, not explain answers. AI answer engines do not use MCQ-style content."
+      "This page is designed for testing users, not for explaining answers. Answer engines do not use MCQ-style content."
     );
 
-    if (sampleQuestion) {
+    if (example) {
       feedback.push(
-        `Under the question “${sampleQuestion.heading}”, add a short explanation explaining the correct option in 2–3 sentences.`
+        `Under the question “${example.heading}”, add a short explanation describing why the correct option is right.`
       );
     }
 
     feedback.push(
-      "To make this page AEO-ready, include a clear ‘Explanation’ or ‘Why this answer is correct’ section after each question."
+      "Add an 'Explanation' or 'Solution' section after each question to make this page usable for AI answers."
     );
 
     feedback.push(
-      "Answer engines prefer explanatory content that teaches concepts, not answer choices."
+      "AI systems prefer explanatory content that teaches concepts, not answer choices."
     );
 
     return feedback;
   }
 
-  // --- INFORMATIONAL / BLOG PAGES ---
-  const h2s = sections.slice(0, 3);
+  /* ---------- INFORMATIONAL / BLOG PAGES ---------- */
   let hasDefinition = false;
   let longParagraphs = [];
   let missingDirectAnswers = [];
@@ -131,13 +148,13 @@ function generateFeedback(sections, intent) {
       if (/ is | refers to | means /i.test(block.text)) {
         hasDefinition = true;
       }
+
       if (block.text.split(" ").length > 90) {
         longParagraphs.push(sec.heading);
       }
     });
 
     if (
-      sec.heading &&
       /what|how|why|when|who/i.test(sec.heading) &&
       sec.blocks.length > 0
     ) {
@@ -150,11 +167,11 @@ function generateFeedback(sections, intent) {
 
   if (!hasDefinition && sections[0]) {
     feedback.push(
-      `Add a clear definition immediately under the heading “${sections[0].heading}” using 1–2 concise sentences.`
+      `Add a concise definition immediately below “${sections[0].heading}” using 1–2 sentences.`
     );
   }
 
-  missingDirectAnswers.forEach(h => {
+  missingDirectAnswers.slice(0, 3).forEach(h => {
     feedback.push(
       `Under the heading “${h}”, add a short direct answer (30–50 words) before going into details.`
     );
@@ -162,43 +179,54 @@ function generateFeedback(sections, intent) {
 
   longParagraphs.slice(0, 2).forEach(h => {
     feedback.push(
-      `Break the long paragraph under “${h}” into shorter, answer-focused blocks to improve AI extractability.`
+      `Break the long paragraph under “${h}” into shorter, answer-focused blocks.`
     );
   });
 
   if (feedback.length === 0) {
     feedback.push(
-      "This page is well-structured for AI answers. The content is clear, segmented, and easy to extract."
+      "Strong AEO structure. The content is clear, segmented, and easy for AI to extract."
     );
   }
 
   return feedback;
 }
 
-/*************************************
- * EXPOSE ANALYZER
- *************************************/
+/************************************************
+ * EXPOSE ANALYZER (SAFE FOR POPUP.JS)
+ ************************************************/
 window.runAEOAnalyzer = function () {
-  const root = extractMainContent();
-  const sections = buildContentMap(root);
-  const intent = detectPageIntent(sections);
+  try {
+    const root = extractMainContent();
+    const sections = buildContentMap(root);
+    const intent = detectPageIntent(sections);
 
-  if (intent === "exam") {
+    if (intent === "exam") {
+      return {
+        score: 0,
+        intent,
+        feedback: generateFeedback(sections, intent),
+        sections
+      };
+    }
+
+    const score = scoreAEO(sections, intent);
+    const feedback = generateFeedback(sections, intent);
+
     return {
-      score: 0,
+      score,
       intent,
-      feedback: generateFeedback(sections, intent),
+      feedback,
       sections
     };
+  } catch (e) {
+    return {
+      score: 0,
+      intent: "error",
+      feedback: [
+        "Unable to analyze this page due to dynamic or restricted content."
+      ],
+      sections: []
+    };
   }
-
-  const score = scoreAEO(sections);
-  const feedback = generateFeedback(sections, intent);
-
-  return {
-    score,
-    intent,
-    feedback,
-    sections
-  };
 };
