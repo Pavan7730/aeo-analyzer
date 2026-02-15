@@ -7,22 +7,23 @@
 </head>
 <body>
 
-  <div class="app">
-    <h1>AEO Analyzer</h1>
+<div class="app">
+  <h1>AEO Analyzer</h1>
 
-    <div class="score-box">
-      <span class="score" id="score">--</span>
-      <span class="label">AEO Score</span>
-    </div>
-
-    <button id="analyze">Analyze Page</button>
-
-    <div class="results" id="results"></div>
-
-    <footer>
-      <small>Answer Engine Optimization</small>
-    </footer>
+  <div class="score-box">
+    <span id="score" class="score">--</span>
+    <span class="label">AEO Score</span>
   </div>
+
+  <button id="analyze">Analyze Page</button>
+
+  <div class="tabs">
+    <div class="tab active" data-tab="feedback">Feedback</div>
+    <div class="tab" data-tab="about">About AEO</div>
+  </div>
+
+  <div class="content" id="content"></div>
+</div>
 
   <script src="popup.js"></script>
 </body>
