@@ -1,0 +1,10 @@
+{
+  "manifest_version": 3,
+  "name": "AEO Analyzer",
+  "description": "Analyze how ready your content is for Answer Engine Optimization (AI answers).",
+  "version": "1.0.0",
+  "permissions": ["activeTab", "scripting"],
+  "action": {
+    "default_popup": "popup/popup.html"
+  }
+}
