@@ -21,20 +21,21 @@ function extractMainContent() {
 }
 
 /************************************************
- * BUILD CONTENT MAP
+ * BUILD CONTENT MAP (STRUCTURE FIRST)
+ * We care about H2/H3 + FIRST answer block
  ************************************************/
 function buildContentMap(root) {
   const sections = [];
   let current = null;
 
   root.querySelectorAll("h1,h2,h3,p,ul,ol,li").forEach(el => {
-    if (/H[1-3]/.test(el.tagName)) {
+    if (/H[2-3]/.test(el.tagName)) {
       current = {
         heading: el.innerText.trim(),
         blocks: []
       };
       sections.push(current);
-    } else if (current) {
+    } else if (current && el.innerText.trim()) {
       current.blocks.push({
         type: el.tagName.toLowerCase(),
         text: el.innerText.trim()
@@ -46,38 +47,28 @@ function buildContentMap(root) {
 }
 
 /************************************************
- * STRONG MCQ DETECTION (FIXED)
+ * STRONG MCQ DETECTION (NO FALSE POSITIVES)
  ************************************************/
 function isMCQPage(sections) {
-  let questionLikeHeadings = 0;
-  let mcqClusters = 0;
+  let mcqHits = 0;
 
   sections.forEach(sec => {
-    if (sec.heading.endsWith("?")) {
-      questionLikeHeadings++;
+    if (!sec.heading.endsWith("?")) return;
 
-      // Look for short, similar-length options nearby
-      const optionCandidates = sec.blocks
-        .filter(b => b.text.length > 1 && b.text.length < 80)
-        .map(b => b.text);
+    const options = sec.blocks.filter(b =>
+      /^[A-D]\)|^[A-D]\.|^\([A-D]\)/.test(b.text)
+    );
 
-      if (optionCandidates.length >= 3) {
-        const similarLength = optionCandidates.every(
-          t => Math.abs(t.length - optionCandidates[0].length) < 25
-        );
-
-        const optionStyle = optionCandidates.some(t =>
-          /^[A-D]\)|^[A-D]\.|^\([A-D]\)/.test(t)
-        );
-
-        if (similarLength && optionStyle) {
-          mcqClusters++;
-        }
-      }
+    // MCQ only if 3+ option-like short lines exist
+    if (options.length >= 3) {
+      const similarLength = options.every(
+        o => Math.abs(o.text.length - options[0].text.length) < 25
+      );
+      if (similarLength) mcqHits++;
     }
   });
 
-  return questionLikeHeadings > 0 && mcqClusters > 0;
+  return mcqHits > 0;
 }
 
 /************************************************
@@ -96,61 +87,86 @@ function detectPageType(sections) {
 }
 
 /************************************************
- * AEO SCORING (QUESTIONS ARE GOOD)
+ * REAL AEO SCORING (NO 100 INFLATION)
+ * - Score ONLY best answer blocks
+ * - Ignore volume
  ************************************************/
 function scoreAEO(sections) {
-  let score = 0;
+  const sectionScores = [];
 
   sections.forEach(sec => {
+    let sectionScore = 0;
+
+    // Question intent
     if (/what|why|how|when|who/i.test(sec.heading)) {
-      score += 12;
+      sectionScore += 20;
     }
 
-    sec.blocks.forEach(block => {
-      const words = block.text.split(/\s+/).length;
+    // ONLY first meaningful block counts
+    const firstBlock = sec.blocks[0];
+    if (!firstBlock) return;
 
-      if (/ is | refers to | means /i.test(block.text)) score += 10;
-      if (block.type === "ul" || block.type === "ol") score += 6;
-      if (words >= 25 && words <= 60) score += 6;
-      if (words > 120) score -= 4;
-    });
+    const words = firstBlock.text.split(/\s+/).length;
+
+    // Ideal AI answer length
+    if (words >= 25 && words <= 60) sectionScore += 40;
+
+    // Definition signal
+    if (/ is | refers to | means /i.test(firstBlock.text)) {
+      sectionScore += 20;
+    }
+
+    // Hard cap per section
+    sectionScores.push(Math.min(sectionScore, 60));
   });
 
-  return Math.max(0, Math.min(score, 100));
+  if (sectionScores.length === 0) return 0;
+
+  // AI usually extracts 1–2 answers only
+  const bestSections = sectionScores
+    .sort((a, b) => b - a)
+    .slice(0, 2);
+
+  const finalScore =
+    bestSections.reduce((a, b) => a + b, 0) / bestSections.length;
+
+  return Math.round(finalScore);
 }
 
 /************************************************
- * PAGE-AWARE FEEDBACK
+ * PAGE-AWARE FEEDBACK (NON-GENERIC)
  ************************************************/
 function generateFeedback(sections, pageType) {
   const feedback = [];
 
-  // ❌ REAL MCQ PAGE ONLY
+  // ❌ REAL MCQ PAGES
   if (pageType === "exam-mcq") {
     feedback.push(
-      "This page contains multiple-choice questions with selectable options. AI answer engines do not use MCQ-style pages."
+      "This page contains MCQ-style questions with answer options. AI answer engines do not extract answers from such pages."
     );
     feedback.push(
-      "To make it AEO-ready, add a clear explanation paragraph after each question explaining the correct answer."
+      "To make it AEO-ready, add a short explanation paragraph explaining the correct answer after each question."
     );
     return feedback;
   }
 
-  // ✅ QUESTION / INFORMATIONAL
+  // ✅ QUESTION / INFORMATIONAL PAGES
   let hasDefinition = false;
-  let weakSections = [];
+  let weakAnswers = [];
 
   sections.forEach(sec => {
     sec.blocks.forEach(block => {
-      if (/ is | refers to | means /i.test(block.text)) hasDefinition = true;
+      if (/ is | refers to | means /i.test(block.text)) {
+        hasDefinition = true;
+      }
     });
 
     if (
       /what|why|how/i.test(sec.heading) &&
-      sec.blocks.length &&
+      sec.blocks[0] &&
       sec.blocks[0].text.split(/\s+/).length > 70
     ) {
-      weakSections.push(sec.heading);
+      weakAnswers.push(sec.heading);
     }
   });
 
@@ -160,15 +176,15 @@ function generateFeedback(sections, pageType) {
     );
   }
 
-  weakSections.slice(0, 3).forEach(h => {
+  weakAnswers.slice(0, 3).forEach(h => {
     feedback.push(
-      `For “${h}”, add a direct 30–40 word answer before expanding with details.`
+      `For “${h}”, add a direct 30–40 word answer before expanding the explanation.`
     );
   });
 
   if (feedback.length === 0) {
     feedback.push(
-      "This page is well-structured for AEO. The question-based format works well for AI answers."
+      "This page is well-structured for AEO. Clear question-answer sections make it easy for AI to extract answers."
     );
   }
 
@@ -176,7 +192,7 @@ function generateFeedback(sections, pageType) {
 }
 
 /************************************************
- * EXPOSE ANALYZER
+ * EXPOSE ANALYZER (SAFE)
  ************************************************/
 window.runAEOAnalyzer = function () {
   try {
