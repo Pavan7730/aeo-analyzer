@@ -1,5 +1,5 @@
 /************************************************
- * MAIN CONTENT EXTRACTION
+ * 1. MAIN CONTENT EXTRACTION
  ************************************************/
 function extractMainContent() {
   const clone = document.body.cloneNode(true);
@@ -21,24 +21,26 @@ function extractMainContent() {
 }
 
 /************************************************
- * BUILD CONTENT MAP (STRUCTURE FIRST)
- * We care about H2/H3 + FIRST answer block
+ * 2. BUILD CONTENT MAP (H2/H3 + BLOCKS)
  ************************************************/
 function buildContentMap(root) {
   const sections = [];
   let current = null;
 
-  root.querySelectorAll("h1,h2,h3,p,ul,ol,li").forEach(el => {
+  root.querySelectorAll("h2,h3,p,ul,ol,li").forEach(el => {
+    const text = el.innerText.trim();
+    if (!text) return;
+
     if (/H[2-3]/.test(el.tagName)) {
       current = {
-        heading: el.innerText.trim(),
+        heading: text,
         blocks: []
       };
       sections.push(current);
-    } else if (current && el.innerText.trim()) {
+    } else if (current) {
       current.blocks.push({
         type: el.tagName.toLowerCase(),
-        text: el.innerText.trim()
+        text
       });
     }
   });
@@ -47,7 +49,7 @@ function buildContentMap(root) {
 }
 
 /************************************************
- * STRONG MCQ DETECTION (NO FALSE POSITIVES)
+ * 3. MCQ PAGE DETECTION (STRICT)
  ************************************************/
 function isMCQPage(sections) {
   let mcqHits = 0;
@@ -59,12 +61,11 @@ function isMCQPage(sections) {
       /^[A-D]\)|^[A-D]\.|^\([A-D]\)/.test(b.text)
     );
 
-    // MCQ only if 3+ option-like short lines exist
     if (options.length >= 3) {
-      const similarLength = options.every(
+      const similar = options.every(
         o => Math.abs(o.text.length - options[0].text.length) < 25
       );
-      if (similarLength) mcqHits++;
+      if (similar) mcqHits++;
     }
   });
 
@@ -72,7 +73,7 @@ function isMCQPage(sections) {
 }
 
 /************************************************
- * PAGE TYPE DETECTION
+ * 4. PAGE TYPE DETECTION
  ************************************************/
 function detectPageType(sections) {
   if (isMCQPage(sections)) return "exam-mcq";
@@ -82,123 +83,128 @@ function detectPageType(sections) {
   );
 
   if (hasQuestions) return "question-informational";
-
   return "informational";
 }
 
 /************************************************
- * REAL AEO SCORING (NO 100 INFLATION)
- * - Score ONLY best answer blocks
- * - Ignore volume
+ * 5. REAL AEO SCORING (NO 100 / NO FLAT 60)
  ************************************************/
 function scoreAEO(sections) {
-  const sectionScores = [];
+  const scores = [];
 
   sections.forEach(sec => {
-    let score = 0;
+    let s = 0;
 
-    // 1️⃣ Question intent (max 20)
-    if (/what|why|how|when|who/i.test(sec.heading)) {
-      score += 20;
-    }
+    // Question intent
+    if (/what|why|how|when|who/i.test(sec.heading)) s += 20;
 
-    // 2️⃣ First answer block (max 40)
-    const firstBlock = sec.blocks[0];
-    if (!firstBlock) return;
+    const first = sec.blocks[0];
+    if (!first) return;
 
-    const words = firstBlock.text.split(/\s+/).length;
-    if (words >= 25 && words <= 60) score += 40;
-    else if (words >= 15 && words < 25) score += 25;
-    else if (words > 60 && words <= 90) score += 25;
+    const words = first.text.split(/\s+/).length;
 
-    // 3️⃣ Definition clarity (max 15)
-    if (/ is | refers to | means /i.test(firstBlock.text)) {
-      score += 15;
-    }
+    // Answer length quality
+    if (words >= 25 && words <= 60) s += 35;
+    else if (words >= 15 && words < 25) s += 20;
+    else if (words > 60 && words <= 90) s += 20;
 
-    // 4️⃣ Structural reinforcement (max 15)
-    const hasListNearAnswer = sec.blocks.some(
+    // Definition clarity
+    if (/ is | refers to | means /i.test(first.text)) s += 15;
+
+    // Supporting structure
+    const hasList = sec.blocks.some(
       b => b.type === "ul" || b.type === "ol"
     );
-    if (hasListNearAnswer) score += 15;
+    if (hasList) s += 10;
 
-    // 5️⃣ Soft cap per section (80, not 60)
-    sectionScores.push(Math.min(score, 80));
+    scores.push(Math.min(s, 80));
   });
 
-  if (sectionScores.length === 0) return 0;
+  if (!scores.length) return 0;
 
-  // AI usually uses best 1–2 answers
-  const best = sectionScores
-    .sort((a, b) => b - a)
-    .slice(0, 2);
-
-  const finalScore =
-    best.reduce((a, b) => a + b, 0) / best.length;
-
-  return Math.round(finalScore);
+  const best = scores.sort((a, b) => b - a).slice(0, 2);
+  return Math.round(best.reduce((a, b) => a + b, 0) / best.length);
 }
 
 /************************************************
- * PAGE-AWARE FEEDBACK (NON-GENERIC)
+ * 6. SCORE-AWARE FEEDBACK (NOT GENERIC)
  ************************************************/
-function generateFeedback(sections, pageType) {
+function generateFeedback(sections, pageType, score) {
   const feedback = [];
 
-  // ❌ REAL MCQ PAGES
+  // MCQ pages
   if (pageType === "exam-mcq") {
     feedback.push(
-      "This page contains MCQ-style questions with answer options. AI answer engines do not extract answers from such pages."
+      "This page uses MCQ-style questions with answer options. AI answer engines do not extract answers from such formats."
     );
     feedback.push(
-      "To make it AEO-ready, add a short explanation paragraph explaining the correct answer after each question."
+      "Add a short explanation paragraph after each question explaining why the correct answer is right."
     );
     return feedback;
   }
 
-  // ✅ QUESTION / INFORMATIONAL PAGES
   let hasDefinition = false;
-  let weakAnswers = [];
+  let longAnswers = [];
 
   sections.forEach(sec => {
-    sec.blocks.forEach(block => {
-      if (/ is | refers to | means /i.test(block.text)) {
-        hasDefinition = true;
-      }
-    });
+    const first = sec.blocks[0];
+    if (!first) return;
+
+    if (/ is | refers to | means /i.test(first.text)) {
+      hasDefinition = true;
+    }
 
     if (
       /what|why|how/i.test(sec.heading) &&
-      sec.blocks[0] &&
-      sec.blocks[0].text.split(/\s+/).length > 70
+      first.text.split(/\s+/).length > 70
     ) {
-      weakAnswers.push(sec.heading);
+      longAnswers.push(sec.heading);
     }
   });
 
+  // Missing definition
   if (!hasDefinition && sections[0]) {
     feedback.push(
-      `Add a short definition directly under “${sections[0].heading}” in 1–2 sentences.`
+      `Add a concise definition (30–40 words) immediately under “${sections[0].heading}”.`
     );
   }
 
-  weakAnswers.slice(0, 3).forEach(h => {
+  // Weak answers
+  longAnswers.slice(0, 2).forEach(h => {
     feedback.push(
-      `For “${h}”, add a direct 30–40 word answer before expanding the explanation.`
+      `For “${h}”, shorten the first paragraph to a direct 30–40 word answer before detailed explanation.`
     );
   });
 
+  // Score-based coaching
   if (feedback.length === 0) {
-    feedback.push(
-      "This page is well-structured for AEO. Clear question-answer sections make it easy for AI to extract answers."
-    );
+    if (score < 60) {
+      feedback.push(
+        "The page contains answers, but they are not concise enough for AI extraction. Tighten the first paragraph under key headings."
+      );
+    } else if (score < 70) {
+      feedback.push(
+        "Improve AEO score by adding sharper, more direct answers immediately after question-based headings."
+      );
+      feedback.push(
+        "Add a short bullet list summarizing answers to improve AI scannability."
+      );
+    } else if (score < 85) {
+      feedback.push(
+        "This page is close to being AEO-optimized. Minor refinements like summary bullets can increase visibility."
+      );
+    } else {
+      feedback.push(
+        "Excellent AEO structure. This content is highly suitable for AI answer extraction."
+      );
+    }
   }
 
   return feedback;
 }
 
 /************************************************
- * EXPOSE ANALYZER (SAFE)
+ * 7. EXPOSE ANALYZER
  ************************************************/
 window.runAEOAnalyzer = function () {
   try {
@@ -210,13 +216,13 @@ window.runAEOAnalyzer = function () {
       return {
         score: "N/A",
         intent: pageType,
-        feedback: generateFeedback(sections, pageType),
+        feedback: generateFeedback(sections, pageType, 0),
         sections
       };
     }
 
     const score = scoreAEO(sections);
-    const feedback = generateFeedback(sections, pageType);
+    const feedback = generateFeedback(sections, pageType, score);
 
     return {
       score,
