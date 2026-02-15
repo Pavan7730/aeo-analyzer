@@ -50,4 +50,40 @@ window.runAEOAnalyzer = function () {
   const score = scoreAEO(sections);
 
   return { score, sections };
+  function generateFeedback(sections) {
+  const feedback = [];
+
+  let hasDefinition = false;
+  let hasQuestions = false;
+  let hasLists = false;
+
+  sections.forEach(sec => {
+    if (sec.heading && sec.heading.includes("?")) hasQuestions = true;
+
+    sec.blocks.forEach(block => {
+      if (/ is | refers to | means /i.test(block.text)) hasDefinition = true;
+      if (block.type === "ul" || block.type === "ol") hasLists = true;
+    });
+  });
+
+  if (!hasDefinition)
+    feedback.push("Add a clear definition near the top of the content.");
+
+  if (!hasQuestions)
+    feedback.push("Use question-based headings like 'What is…' or 'How does…'.");
+
+  if (!hasLists)
+    feedback.push("Use bullet points or steps to improve AI extractability.");
+
+  if (feedback.length === 0)
+    feedback.push("Great structure! Your content is AI-friendly.");
+
+  return feedback;
+}
+return {
+  score,
+  sections,
+  intent: "informational",
+  feedback: generateFeedback(sections)
 };
+
