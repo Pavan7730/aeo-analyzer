@@ -95,40 +95,46 @@ function scoreAEO(sections) {
   const sectionScores = [];
 
   sections.forEach(sec => {
-    let sectionScore = 0;
+    let score = 0;
 
-    // Question intent
+    // 1️⃣ Question intent (max 20)
     if (/what|why|how|when|who/i.test(sec.heading)) {
-      sectionScore += 20;
+      score += 20;
     }
 
-    // ONLY first meaningful block counts
+    // 2️⃣ First answer block (max 40)
     const firstBlock = sec.blocks[0];
     if (!firstBlock) return;
 
     const words = firstBlock.text.split(/\s+/).length;
+    if (words >= 25 && words <= 60) score += 40;
+    else if (words >= 15 && words < 25) score += 25;
+    else if (words > 60 && words <= 90) score += 25;
 
-    // Ideal AI answer length
-    if (words >= 25 && words <= 60) sectionScore += 40;
-
-    // Definition signal
+    // 3️⃣ Definition clarity (max 15)
     if (/ is | refers to | means /i.test(firstBlock.text)) {
-      sectionScore += 20;
+      score += 15;
     }
 
-    // Hard cap per section
-    sectionScores.push(Math.min(sectionScore, 60));
+    // 4️⃣ Structural reinforcement (max 15)
+    const hasListNearAnswer = sec.blocks.some(
+      b => b.type === "ul" || b.type === "ol"
+    );
+    if (hasListNearAnswer) score += 15;
+
+    // 5️⃣ Soft cap per section (80, not 60)
+    sectionScores.push(Math.min(score, 80));
   });
 
   if (sectionScores.length === 0) return 0;
 
-  // AI usually extracts 1–2 answers only
-  const bestSections = sectionScores
+  // AI usually uses best 1–2 answers
+  const best = sectionScores
     .sort((a, b) => b - a)
     .slice(0, 2);
 
   const finalScore =
-    bestSections.reduce((a, b) => a + b, 0) / bestSections.length;
+    best.reduce((a, b) => a + b, 0) / best.length;
 
   return Math.round(finalScore);
 }
