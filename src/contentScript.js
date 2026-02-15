@@ -4,7 +4,7 @@
 function extractMainContent() {
   const clone = document.body.cloneNode(true);
 
-  const removeSelectors = [
+  [
     "nav",
     "footer",
     "aside",
@@ -12,12 +12,8 @@ function extractMainContent() {
     "style",
     "noscript",
     ".ads",
-    ".sidebar",
-    ".menu",
-    ".popup"
-  ];
-
-  removeSelectors.forEach(sel => {
+    ".sidebar"
+  ].forEach(sel => {
     clone.querySelectorAll(sel).forEach(el => el.remove());
   });
 
@@ -25,7 +21,7 @@ function extractMainContent() {
 }
 
 /************************************************
- * BUILD CONTENT MAP (H1–H3 + TEXT)
+ * BUILD CONTENT MAP
  ************************************************/
 function buildContentMap(root) {
   const sections = [];
@@ -50,57 +46,62 @@ function buildContentMap(root) {
 }
 
 /************************************************
- * PAGE INTENT DETECTION
+ * PAGE TYPE DETECTION (FIXED LOGIC)
  ************************************************/
-function detectPageIntent(sections) {
-  let questionHeadings = 0;
-  let optionLines = 0;
+function detectPageType(sections) {
+  let questionCount = 0;
+  let optionCount = 0;
 
   sections.forEach(sec => {
-    if (sec.heading.endsWith("?")) questionHeadings++;
+    if (sec.heading.endsWith("?")) questionCount++;
 
     sec.blocks.forEach(block => {
       if (/^[A-D]\.|^\d+\./.test(block.text)) {
-        optionLines++;
+        optionCount++;
       }
     });
   });
 
-  if (questionHeadings > 0 && optionLines >= 2) {
-    return "exam";
+  // ❌ ONLY MCQ EXAM PAGES
+  if (questionCount > 0 && optionCount >= 2) {
+    return "exam-mcq";
   }
 
+  // ✅ Question-based informational pages
+  if (questionCount > 0) {
+    return "question-informational";
+  }
+
+  // ✅ Normal blog / guide
   return "informational";
 }
 
 /************************************************
- * AEO SCORING (HONEST & INTENT-AWARE)
+ * AEO SCORING (QUESTION PAGES INCLUDED)
  ************************************************/
-function scoreAEO(sections, intent) {
-  if (intent === "exam") return 0;
-
+function scoreAEO(sections) {
   let score = 0;
 
   sections.forEach(sec => {
-    // Question-style headings
-    if (/what|how|why|when|who/i.test(sec.heading)) {
-      score += 8;
+    // Question headings are GOOD for AEO
+    if (/what|why|how|when|who/i.test(sec.heading)) {
+      score += 12;
     }
 
     sec.blocks.forEach(block => {
-      const wordCount = block.text.split(" ").length;
+      const words = block.text.split(" ").length;
 
       // Definition signals
       if (/ is | refers to | means /i.test(block.text)) score += 10;
 
-      // Lists and steps
-      if (block.type === "ul" || block.type === "ol") score += 5;
+      // Lists
+      if (block.type === "ul" || block.type === "ol") score += 6;
 
-      // Direct answer sized paragraphs
-      if (wordCount >= 25 && wordCount <= 60) score += 5;
+      // Direct answer length
+      if (words >= 25 && words <= 60) score += 6;
 
-      // Penalize very long paragraphs
-      if (wordCount > 120) score -= 5;
+      // Penalize very long answers
+      if (words > 120) score -= 4;
     });
   });
 
@@ -108,84 +109,57 @@ function scoreAEO(sections, intent) {
 }
 
 /************************************************
- * SMART, PAGE-SPECIFIC FEEDBACK
+ * PAGE-AWARE FEEDBACK (WHAT / WHY LOGIC)
  ************************************************/
-function generateFeedback(sections, intent) {
+function generateFeedback(sections, pageType) {
   const feedback = [];
 
-  /* ---------- EXAM / MCQ PAGES ---------- */
-  if (intent === "exam") {
-    const example = sections.find(s => s.heading.endsWith("?"));
-
+  // ❌ MCQ PAGES
+  if (pageType === "exam-mcq") {
     feedback.push(
-      "This page is designed for testing users, not for explaining answers. Answer engines do not use MCQ-style content."
+      "This page uses MCQ-style questions with answer options. AI answer engines do not use such pages."
     );
-
-    if (example) {
-      feedback.push(
-        `Under the question “${example.heading}”, add a short explanation describing why the correct option is right.`
-      );
-    }
-
     feedback.push(
-      "Add an 'Explanation' or 'Solution' section after each question to make this page usable for AI answers."
+      "To make it AEO-ready, add a short explanation section explaining the correct answer in paragraph form."
     );
-
-    feedback.push(
-      "AI systems prefer explanatory content that teaches concepts, not answer choices."
-    );
-
     return feedback;
   }
 
-  /* ---------- INFORMATIONAL / BLOG PAGES ---------- */
+  // ✅ QUESTION-INFORMATIONAL & BLOG
   let hasDefinition = false;
-  let longParagraphs = [];
-  let missingDirectAnswers = [];
+  let weakQuestions = [];
 
   sections.forEach(sec => {
     sec.blocks.forEach(block => {
       if (/ is | refers to | means /i.test(block.text)) {
         hasDefinition = true;
       }
-
-      if (block.text.split(" ").length > 90) {
-        longParagraphs.push(sec.heading);
-      }
     });
 
     if (
-      /what|how|why|when|who/i.test(sec.heading) &&
-      sec.blocks.length > 0
+      /what|why|how/i.test(sec.heading) &&
+      sec.blocks.length > 0 &&
+      sec.blocks[0].text.split(" ").length > 70
     ) {
-      const firstBlock = sec.blocks[0];
-      if (firstBlock.text.split(" ").length > 70) {
-        missingDirectAnswers.push(sec.heading);
-      }
+      weakQuestions.push(sec.heading);
     }
   });
 
   if (!hasDefinition && sections[0]) {
     feedback.push(
-      `Add a concise definition immediately below “${sections[0].heading}” using 1–2 sentences.`
+      `Add a clear definition directly under “${sections[0].heading}” in 1–2 sentences.`
     );
   }
 
-  missingDirectAnswers.slice(0, 3).forEach(h => {
+  weakQuestions.slice(0, 3).forEach(h => {
     feedback.push(
-      `Under the heading “${h}”, add a short direct answer (30–50 words) before going into details.`
-    );
-  });
-
-  longParagraphs.slice(0, 2).forEach(h => {
-    feedback.push(
-      `Break the long paragraph under “${h}” into shorter, answer-focused blocks.`
+      `For “${h}”, add a short direct answer (30–40 words) before expanding the explanation.`
     );
   });
 
   if (feedback.length === 0) {
     feedback.push(
-      "Strong AEO structure. The content is clear, segmented, and easy for AI to extract."
+      "Strong AEO structure. The question-based format is well-suited for AI answers."
     );
   }
 
@@ -193,29 +167,29 @@ function generateFeedback(sections, intent) {
 }
 
 /************************************************
- * EXPOSE ANALYZER (SAFE FOR POPUP.JS)
+ * EXPOSE ANALYZER
  ************************************************/
 window.runAEOAnalyzer = function () {
   try {
     const root = extractMainContent();
     const sections = buildContentMap(root);
-    const intent = detectPageIntent(sections);
+    const pageType = detectPageType(sections);
 
-    if (intent === "exam") {
+    if (pageType === "exam-mcq") {
       return {
-        score: 0,
-        intent,
-        feedback: generateFeedback(sections, intent),
+        score: "N/A",
+        intent: pageType,
+        feedback: generateFeedback(sections, pageType),
         sections
       };
     }
 
-    const score = scoreAEO(sections, intent);
-    const feedback = generateFeedback(sections, intent);
+    const score = scoreAEO(sections);
+    const feedback = generateFeedback(sections, pageType);
 
     return {
       score,
-      intent,
+      intent: pageType,
       feedback,
       sections
     };
