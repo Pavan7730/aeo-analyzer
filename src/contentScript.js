@@ -27,7 +27,7 @@ function buildContentMap(root) {
   const sections = [];
   let current = null;
 
-  root.querySelectorAll("h1,h2,h3,p,ul,ol").forEach(el => {
+  root.querySelectorAll("h1,h2,h3,p,ul,ol,li").forEach(el => {
     if (/H[1-3]/.test(el.tagName)) {
       current = {
         heading: el.innerText.trim(),
@@ -46,61 +46,72 @@ function buildContentMap(root) {
 }
 
 /************************************************
- * PAGE TYPE DETECTION (FIXED LOGIC)
+ * STRONG MCQ DETECTION (FIXED)
  ************************************************/
-function detectPageType(sections) {
-  let questionCount = 0;
-  let optionCount = 0;
+function isMCQPage(sections) {
+  let questionLikeHeadings = 0;
+  let mcqClusters = 0;
 
   sections.forEach(sec => {
-    if (sec.heading.endsWith("?")) questionCount++;
+    if (sec.heading.endsWith("?")) {
+      questionLikeHeadings++;
 
-    sec.blocks.forEach(block => {
-      if (/^[A-D]\.|^\d+\./.test(block.text)) {
-        optionCount++;
+      // Look for short, similar-length options nearby
+      const optionCandidates = sec.blocks
+        .filter(b => b.text.length > 1 && b.text.length < 80)
+        .map(b => b.text);
+
+      if (optionCandidates.length >= 3) {
+        const similarLength = optionCandidates.every(
+          t => Math.abs(t.length - optionCandidates[0].length) < 25
+        );
+
+        const optionStyle = optionCandidates.some(t =>
+          /^[A-D]\)|^[A-D]\.|^\([A-D]\)/.test(t)
+        );
+
+        if (similarLength && optionStyle) {
+          mcqClusters++;
+        }
       }
-    });
+    }
   });
 
-  // ❌ ONLY MCQ EXAM PAGES
-  if (questionCount > 0 && optionCount >= 2) {
-    return "exam-mcq";
-  }
+  return questionLikeHeadings > 0 && mcqClusters > 0;
+}
 
-  // ✅ Question-based informational pages
-  if (questionCount > 0) {
-    return "question-informational";
-  }
+/************************************************
+ * PAGE TYPE DETECTION
+ ************************************************/
+function detectPageType(sections) {
+  if (isMCQPage(sections)) return "exam-mcq";
 
-  // ✅ Normal blog / guide
+  const hasQuestions = sections.some(sec =>
+    /what|why|how|when|who/i.test(sec.heading)
+  );
+
+  if (hasQuestions) return "question-informational";
+
   return "informational";
 }
 
 /************************************************
- * AEO SCORING (QUESTION PAGES INCLUDED)
+ * AEO SCORING (QUESTIONS ARE GOOD)
  ************************************************/
 function scoreAEO(sections) {
   let score = 0;
 
   sections.forEach(sec => {
-    // Question headings are GOOD for AEO
     if (/what|why|how|when|who/i.test(sec.heading)) {
       score += 12;
     }
 
     sec.blocks.forEach(block => {
-      const words = block.text.split(" ").length;
+      const words = block.text.split(/\s+/).length;
 
-      // Definition signals
       if (/ is | refers to | means /i.test(block.text)) score += 10;
-
-      // Lists
       if (block.type === "ul" || block.type === "ol") score += 6;
-
-      // Direct answer length
       if (words >= 25 && words <= 60) score += 6;
-
-      // Penalize very long answers
       if (words > 120) score -= 4;
     });
   });
@@ -109,57 +120,55 @@ function scoreAEO(sections) {
 }
 
 /************************************************
- * PAGE-AWARE FEEDBACK (WHAT / WHY LOGIC)
+ * PAGE-AWARE FEEDBACK
  ************************************************/
 function generateFeedback(sections, pageType) {
   const feedback = [];
 
-  // ❌ MCQ PAGES
+  // ❌ REAL MCQ PAGE ONLY
   if (pageType === "exam-mcq") {
     feedback.push(
-      "This page uses MCQ-style questions with answer options. AI answer engines do not use such pages."
+      "This page contains multiple-choice questions with selectable options. AI answer engines do not use MCQ-style pages."
     );
     feedback.push(
-      "To make it AEO-ready, add a short explanation section explaining the correct answer in paragraph form."
+      "To make it AEO-ready, add a clear explanation paragraph after each question explaining the correct answer."
     );
     return feedback;
   }
 
-  // ✅ QUESTION-INFORMATIONAL & BLOG
+  // ✅ QUESTION / INFORMATIONAL
   let hasDefinition = false;
-  let weakQuestions = [];
+  let weakSections = [];
 
   sections.forEach(sec => {
     sec.blocks.forEach(block => {
-      if (/ is | refers to | means /i.test(block.text)) {
-        hasDefinition = true;
-      }
+      if (/ is | refers to | means /i.test(block.text)) hasDefinition = true;
     });
 
     if (
       /what|why|how/i.test(sec.heading) &&
-      sec.blocks.length > 0 &&
-      sec.blocks[0].text.split(" ").length > 70
+      sec.blocks.length &&
+      sec.blocks[0].text.split(/\s+/).length > 70
     ) {
-      weakQuestions.push(sec.heading);
+      weakSections.push(sec.heading);
     }
   });
 
   if (!hasDefinition && sections[0]) {
     feedback.push(
-      `Add a clear definition directly under “${sections[0].heading}” in 1–2 sentences.`
+      `Add a short definition directly under “${sections[0].heading}” in 1–2 sentences.`
     );
   }
 
-  weakQuestions.slice(0, 3).forEach(h => {
+  weakSections.slice(0, 3).forEach(h => {
     feedback.push(
-      `For “${h}”, add a short direct answer (30–40 words) before expanding the explanation.`
+      `For “${h}”, add a direct 30–40 word answer before expanding with details.`
     );
   });
 
   if (feedback.length === 0) {
     feedback.push(
-      "Strong AEO structure. The question-based format is well-suited for AI answers."
+      "This page is well-structured for AEO. The question-based format works well for AI answers."
     );
   }
 
