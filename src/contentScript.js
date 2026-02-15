@@ -17,14 +17,14 @@ function buildContentMap(root) {
   root.querySelectorAll("h1,h2,h3,p,ul,ol").forEach(el => {
     if (el.tagName.startsWith("H")) {
       current = {
-        heading: el.innerText,
+        heading: el.innerText.trim(),
         blocks: []
       };
       sections.push(current);
     } else if (current) {
       current.blocks.push({
         type: el.tagName.toLowerCase(),
-        text: el.innerText
+        text: el.innerText.trim()
       });
     }
   });
@@ -32,25 +32,8 @@ function buildContentMap(root) {
   return sections;
 }
 
-// ---------- scoring ----------
-function scoreAEO(sections) {
-  let score = 0;
-
-  sections.forEach(sec => {
-    if (sec.heading.includes("?")) score += 10;
-  });
-
-  return Math.min(score, 100);
-}
-
-// ---------- expose ----------
-window.runAEOAnalyzer = function () {
-  const root = extractMainContent();
-  const sections = buildContentMap(root);
-  const score = scoreAEO(sections);
-
-  return { score, sections };
-  function generateFeedback(sections) {
+// ---------- feedback ----------
+function generateFeedback(sections) {
   const feedback = [];
 
   let hasDefinition = false;
@@ -80,10 +63,29 @@ window.runAEOAnalyzer = function () {
 
   return feedback;
 }
-return {
-  score,
-  sections,
-  intent: "informational",
-  feedback: generateFeedback(sections)
-};
 
+// ---------- scoring ----------
+function scoreAEO(sections) {
+  let score = 0;
+
+  sections.forEach(sec => {
+    if (sec.heading && sec.heading.includes("?")) score += 10;
+  });
+
+  return Math.min(score, 100);
+}
+
+// ---------- expose ----------
+window.runAEOAnalyzer = function () {
+  const root = extractMainContent();
+  const sections = buildContentMap(root);
+  const score = scoreAEO(sections);
+  const feedback = generateFeedback(sections);
+
+  return {
+    score,
+    sections,
+    intent: "informational",
+    feedback
+  };
+};
