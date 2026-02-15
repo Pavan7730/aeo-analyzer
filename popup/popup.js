@@ -2,6 +2,9 @@ const scoreEl = document.getElementById("score");
 const contentEl = document.getElementById("content");
 const tabs = document.querySelectorAll(".tab");
 
+let currentData = null;
+
+/* ---------------- TAB HANDLING ---------------- */
 tabs.forEach(tab => {
   tab.addEventListener("click", () => {
     tabs.forEach(t => t.classList.remove("active"));
@@ -10,50 +13,89 @@ tabs.forEach(tab => {
   });
 });
 
+/* ---------------- ANALYZE BUTTON ---------------- */
 document.getElementById("analyze").addEventListener("click", async () => {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  contentEl.innerHTML = "Analyzing page…";
+  scoreEl.textContent = "--";
+  scoreEl.className = "score";
 
-  chrome.scripting.executeScript(
-    { target: { tabId: tab.id }, files: ["src/contentScript.js"] },
-    () => {
-      chrome.scripting.executeScript(
-        {
-          target: { tabId: tab.id },
-          func: () => window.runAEOAnalyzer()
-        },
-        results => renderResult(results[0].result)
-      );
-    }
-  );
+  try {
+    const [tab] = await chrome.tabs.query({
+      active: true,
+      currentWindow: true
+    });
+
+    // Inject content script
+    chrome.scripting.executeScript(
+      {
+        target: { tabId: tab.id },
+        files: ["src/contentScript.js"]
+      },
+      () => {
+        // Execute analyzer
+        chrome.scripting.executeScript(
+          {
+            target: { tabId: tab.id },
+            func: () => window.runAEOAnalyzer && window.runAEOAnalyzer()
+          },
+          (results) => {
+            // SAFETY CHECK (THIS FIXES YOUR ERROR)
+            if (
+              !results ||
+              !Array.isArray(results) ||
+              !results[0] ||
+              !results[0].result
+            ) {
+              renderResult({
+                score: 0,
+                intent: "unknown",
+                feedback: [
+                  "Unable to analyze this page.",
+                  "The content may be dynamically loaded, restricted, or blocked."
+                ]
+              });
+              return;
+            }
+
+            renderResult(results[0].result);
+          }
+        );
+      }
+    );
+  } catch (err) {
+    renderResult({
+      score: 0,
+      intent: "error",
+      feedback: ["Unexpected error occurred while analyzing the page."]
+    });
+  }
 });
 
-let currentData = null;
-
+/* ---------------- RENDER RESULT ---------------- */
 function renderResult(data) {
   currentData = data;
 
-  if (data.intent === "test") {
+  // Score display
+  if (data.intent === "exam" || data.intent === "unknown") {
     scoreEl.textContent = "N/A";
     scoreEl.className = "score bad";
-    contentEl.innerHTML =
-      "<div class='feedback'>This is a test/MCQ page. AEO applies to explanatory content.</div>";
-    return;
+  } else {
+    scoreEl.textContent = data.score;
+    scoreEl.className =
+      "score " +
+      (data.score >= 75 ? "good" : data.score >= 50 ? "medium" : "bad");
   }
-
-  scoreEl.textContent = data.score;
-
-  scoreEl.className = "score " +
-    (data.score >= 75 ? "good" : data.score >= 50 ? "medium" : "bad");
 
   renderTab("feedback");
 }
 
+/* ---------------- TAB CONTENT ---------------- */
 function renderTab(tab) {
   if (!currentData) return;
 
   if (tab === "feedback") {
     contentEl.innerHTML = currentData.feedback
-      .map(item => `<div class="feedback">${item}</div>`)
+      .map(f => `<div class="feedback">${f}</div>`)
       .join("");
   }
 
@@ -61,13 +103,13 @@ function renderTab(tab) {
     contentEl.innerHTML = `
       <div class="feedback">
         <strong>What is AEO?</strong><br>
-        Answer Engine Optimization helps your content get used as AI answers.
+        Answer Engine Optimization (AEO) focuses on making content easy for AI systems to extract clear answers.
       </div>
       <div class="feedback">
-        AI systems prefer direct answers, clear definitions, lists, and FAQs.
+        AI engines prefer definitions, direct answers, lists, and explanations.
       </div>
       <div class="feedback">
-        This tool measures how easy it is for AI to extract answers from your page.
+        Exam and MCQ pages are usually not suitable for AEO unless explanations are provided.
       </div>
     `;
   }
