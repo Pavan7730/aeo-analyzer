@@ -3,8 +3,16 @@
   "name": "AEO Analyzer",
   "description": "Analyze how ready your content is for Answer Engine Optimization (AI answers).",
   "version": "1.0.0",
+
   "permissions": ["activeTab", "scripting"],
+
   "action": {
     "default_popup": "popup/popup.html"
+  },
+
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
   }
 }
